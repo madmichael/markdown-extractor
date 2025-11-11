@@ -305,13 +305,27 @@ def extract_with_marker(pdf_path, start_page, end_page):
     if not MARKER_AVAILABLE or not MARKER_CONVERTER:
         raise ImportError("Marker library not available")
 
-    # Marker processes the whole PDF
-    rendered = MARKER_CONVERTER(pdf_path)
+    # Convert from 1-indexed to 0-indexed for Marker
+    # Marker uses page_range in format "start-end" (0-indexed)
+    marker_start = start_page - 1
+    marker_end = end_page - 1
+    page_range = f"{marker_start}-{marker_end}"
+
+    # Create a converter with page range configuration
+    config_dict = {
+        "disable_multiprocessing": True,
+        "page_range": page_range
+    }
+    config_parser = ConfigParser(config_dict)
+    converter = PdfConverter(
+        artifact_dict=MARKER_MODELS,
+        config=config_parser.generate_config_dict()
+    )
+
+    # Process the PDF with the specified page range
+    rendered = converter(pdf_path)
     full_text, _, images = text_from_rendered(rendered)
 
-    # If we need a page range, we'll need to filter the output
-    # For now, return the full extraction
-    # TODO: Implement page range filtering for Marker output
     return full_text
 
 

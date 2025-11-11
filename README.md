@@ -126,7 +126,7 @@ markdown-extractor/
 
 You can modify the following settings in `app.py`:
 
-- `MAX_FILE_SIZE`: Maximum upload file size (default: 16MB)
+- `MAX_FILE_SIZE`: Maximum upload file size (default: 100MB)
 - `UPLOAD_FOLDER`: Temporary upload directory (default: 'uploads')
 - `port`: Server port (default: 5000)
 
@@ -149,7 +149,7 @@ The Flask development server will start with debug mode enabled.
 
 ## Limitations
 
-- Maximum file size: 16MB (configurable)
+- Maximum file size: 100MB (configurable)
 - Text extraction quality depends on PDF format
 - Scanned PDFs (images) require OCR (not currently supported)
 - Complex PDF layouts may have formatting issues

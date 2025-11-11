@@ -10,7 +10,7 @@ CORS(app)
 # Configuration
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'pdf'}
-MAX_FILE_SIZE = 16 * 1024 * 1024  # 16MB
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
@@ -151,6 +151,14 @@ def extract_pdf():
 def health_check():
     """Health check endpoint."""
     return jsonify({'status': 'healthy', 'message': 'PDF to Markdown Extractor API is running'})
+
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    """Handle file too large error."""
+    return jsonify({
+        'error': f'File too large. Maximum file size is {MAX_FILE_SIZE // (1024 * 1024)}MB.'
+    }), 413
 
 
 if __name__ == '__main__':

@@ -94,12 +94,15 @@ async function getTotalPages(file) {
 
         const data = await response.json();
 
-        if (data.total_pages) {
+        if (response.ok && data.total_pages) {
             totalPages = data.total_pages;
             endPageInput.value = totalPages;
             endPageInput.max = totalPages;
             startPageInput.max = totalPages;
             totalPagesText.textContent = `Total pages in PDF: ${totalPages}`;
+            pageRangeSection.style.display = 'block';
+        } else if (data.error) {
+            showError(data.error);
             pageRangeSection.style.display = 'block';
         }
     } catch (error) {

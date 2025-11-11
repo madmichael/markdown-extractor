@@ -30,12 +30,14 @@ def clean_text(text):
     # Remove excessive whitespace
     text = re.sub(r'[ \t]+', ' ', text)
 
-    # Remove word breaks (hyphenation at line end)
-    text = re.sub(r'(\w)-\n(\w)', r'\1\2', text)
+    # Remove word breaks (hyphenation at line end) - handle both \n and space
+    # Examples: "Play- ing" -> "Playing", "dun-\ngeon" -> "dungeon"
+    text = re.sub(r'(\w)-\s*\n\s*(\w)', r'\1\2', text)  # With newline
+    text = re.sub(r'(\w)-\s+(\w)', r'\1\2', text)  # With spaces only
 
-    # Fix broken words across lines (e.g., "experi\nence" -> "experience")
-    # Look for lowercase letter followed by newline and lowercase letter
-    text = re.sub(r'([a-z])\n([a-z])', r'\1\2', text)
+    # Fix broken words across lines (e.g., "experi ence" -> "experience")
+    # Look for lowercase letter followed by newline/space and lowercase letter
+    text = re.sub(r'([a-z])\s*\n\s*([a-z])', r'\1\2', text)
 
     # Normalize multiple spaces
     text = re.sub(r'  +', ' ', text)
@@ -94,16 +96,96 @@ def format_line_as_markdown(line, is_heading=False, heading_level=3):
 def extract_text_with_layout(page):
     """
     Extract text from a page with better layout awareness.
-    Handles multi-column layouts by sorting text by position.
+    Handles multi-column layouts by detecting columns and reading them in order.
     """
-    # Try layout-preserving extraction first
-    text = page.extract_text(layout=True, x_tolerance=3, y_tolerance=3)
+    try:
+        # Extract words with their positions
+        words = page.extract_words(x_tolerance=3, y_tolerance=3, keep_blank_chars=False)
 
-    if not text:
-        # Fallback to basic extraction
-        text = page.extract_text()
+        if not words:
+            # Fallback to basic extraction
+            return page.extract_text()
 
-    return text
+        # Detect columns by clustering x-coordinates
+        x_coords = [w['x0'] for w in words]
+
+        # Simple column detection: find gaps in x-coordinates
+        sorted_x = sorted(set(x_coords))
+        columns = []
+        current_column = [sorted_x[0]]
+
+        # Group x-coordinates into columns (gap > 50 points suggests new column)
+        for x in sorted_x[1:]:
+            if x - current_column[-1] > 50:
+                columns.append(current_column)
+                current_column = [x]
+            else:
+                current_column.append(x)
+        columns.append(current_column)
+
+        # If we have multiple columns, sort words by column then by y-position
+        if len(columns) > 1:
+            # Determine column boundaries
+            column_boundaries = []
+            for col in columns:
+                min_x = min(col)
+                max_x = max(col)
+                mid_x = (min_x + max_x) / 2
+                column_boundaries.append((min_x, max_x, mid_x))
+
+            # Assign each word to a column
+            for word in words:
+                word_x = (word['x0'] + word['x1']) / 2
+                # Find which column this word belongs to
+                for col_idx, (min_x, max_x, mid_x) in enumerate(column_boundaries):
+                    if min_x <= word_x <= max_x + 20:  # Small tolerance
+                        word['column'] = col_idx
+                        break
+                else:
+                    # If no match, assign to nearest column
+                    distances = [abs(word_x - mid_x) for _, _, mid_x in column_boundaries]
+                    word['column'] = distances.index(min(distances))
+
+            # Sort words: first by column (left to right), then by y-position (top to bottom)
+            words.sort(key=lambda w: (w.get('column', 0), w['top'], w['x0']))
+        else:
+            # Single column: just sort by y-position then x-position
+            words.sort(key=lambda w: (w['top'], w['x0']))
+
+        # Reconstruct text with proper line breaks
+        lines = []
+        current_line = []
+        last_top = None
+        last_column = None
+
+        for word in words:
+            current_top = word['top']
+            current_column = word.get('column', 0)
+
+            # Check if we need a new line
+            if last_top is not None:
+                # New line if y-position changed significantly (>3 points) or column changed
+                if abs(current_top - last_top) > 3 or (current_column != last_column and len(columns) > 1):
+                    if current_line:
+                        lines.append(' '.join(current_line))
+                        current_line = []
+
+            current_line.append(word['text'])
+            last_top = current_top
+            last_column = current_column
+
+        # Add last line
+        if current_line:
+            lines.append(' '.join(current_line))
+
+        return '\n'.join(lines)
+
+    except Exception as e:
+        # Fallback to layout-preserving extraction
+        text = page.extract_text(layout=True, x_tolerance=3, y_tolerance=3)
+        if not text:
+            text = page.extract_text()
+        return text
 
 
 def is_list_item(line):

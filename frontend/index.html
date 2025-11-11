@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF to Markdown Extractor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📄 PDF to Markdown Extractor</h1>
+            <p class="subtitle">Extract text from PDF documents and convert to markdown format</p>
+        </header>
+
+        <main>
+            <div class="upload-section">
+                <div class="upload-box" id="uploadBox">
+                    <input type="file" id="pdfFile" accept=".pdf" hidden>
+                    <label for="pdfFile" class="upload-label">
+                        <svg class="upload-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                        </svg>
+                        <span id="uploadText">Choose PDF or drag and drop</span>
+                        <span class="file-info" id="fileInfo"></span>
+                    </label>
+                </div>
+
+                <div class="page-range-section" id="pageRangeSection" style="display: none;">
+                    <h3>Select Page Range</h3>
+                    <div class="page-inputs">
+                        <div class="input-group">
+                            <label for="startPage">Start Page</label>
+                            <input type="number" id="startPage" min="1" value="1" placeholder="1">
+                        </div>
+                        <span class="separator">to</span>
+                        <div class="input-group">
+                            <label for="endPage">End Page</label>
+                            <input type="number" id="endPage" min="1" placeholder="Last page">
+                        </div>
+                    </div>
+                    <p class="total-pages" id="totalPages"></p>
+                    <button id="extractBtn" class="btn btn-primary">Extract Markdown</button>
+                </div>
+            </div>
+
+            <div class="loading" id="loading" style="display: none;">
+                <div class="spinner"></div>
+                <p>Extracting text from PDF...</p>
+            </div>
+
+            <div class="error-message" id="errorMessage" style="display: none;"></div>
+
+            <div class="result-section" id="resultSection" style="display: none;">
+                <div class="result-header">
+                    <h3>Extracted Markdown</h3>
+                    <div class="result-actions">
+                        <button id="copyBtn" class="btn btn-secondary">Copy to Clipboard</button>
+                        <button id="downloadBtn" class="btn btn-secondary">Download .md</button>
+                        <button id="resetBtn" class="btn btn-outline">New Extraction</button>
+                    </div>
+                </div>
+
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="markdown">Markdown</button>
+                    <button class="tab-btn" data-tab="preview">Preview</button>
+                </div>
+
+                <div class="tab-content active" id="markdownTab">
+                    <pre><code id="markdownOutput"></code></pre>
+                </div>
+
+                <div class="tab-content" id="previewTab">
+                    <div id="markdownPreview" class="markdown-preview"></div>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>Upload a PDF, select page range, and extract as markdown</p>
+        </footer>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

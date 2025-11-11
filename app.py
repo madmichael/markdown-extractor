@@ -21,8 +21,15 @@ try:
     from marker.models import load_all_models
     MARKER_AVAILABLE = True
     # Load models once at startup
+    print("Loading Marker models... (this may take a moment on first run)")
     MARKER_MODELS = load_all_models()
-except ImportError:
+    print("✓ Marker models loaded successfully!")
+except ImportError as e:
+    print(f"✗ Marker not available: Import error - {e}")
+    MARKER_AVAILABLE = False
+    MARKER_MODELS = None
+except Exception as e:
+    print(f"✗ Marker models failed to load: {e}")
     MARKER_AVAILABLE = False
     MARKER_MODELS = None
 

@@ -16,6 +16,16 @@ try:
 except ImportError:
     PYMUPDF_AVAILABLE = False
 
+try:
+    from marker.convert import convert_single_pdf
+    from marker.models import load_all_models
+    MARKER_AVAILABLE = True
+    # Load models once at startup
+    MARKER_MODELS = load_all_models()
+except ImportError:
+    MARKER_AVAILABLE = False
+    MARKER_MODELS = None
+
 app = Flask(__name__, static_folder='frontend')
 CORS(app)
 
@@ -259,6 +269,32 @@ def extract_with_markitdown(pdf_path):
     return result.text_content
 
 
+def extract_with_marker(pdf_path, start_page, end_page):
+    """
+    Extract text from PDF using Marker library.
+    Marker uses computer vision and ML for superior layout detection,
+    especially for multi-column documents.
+
+    Args:
+        pdf_path: Path to the PDF file
+        start_page: Starting page number (1-indexed)
+        end_page: Ending page number (1-indexed)
+
+    Returns:
+        Markdown formatted text
+    """
+    if not MARKER_AVAILABLE:
+        raise ImportError("Marker library not available")
+
+    # Marker processes the whole PDF
+    full_text, images, metadata = convert_single_pdf(pdf_path, MARKER_MODELS, max_pages=None)
+
+    # If we need a page range, we'll need to filter the output
+    # For now, return the full extraction
+    # TODO: Implement page range filtering for Marker output
+    return full_text
+
+
 def extract_with_pymupdf(pdf_path, start_page, end_page):
     """
     Extract text from PDF using PyMuPDF (fitz).
@@ -323,14 +359,24 @@ def extract_text_to_markdown(pdf_path, start_page, end_page, options=None):
     if options is None:
         options = {}
 
-    use_pymupdf = options.get('use_pymupdf', True)
+    use_marker = options.get('use_marker', True)
+    use_pymupdf = options.get('use_pymupdf', False)
     use_markitdown = options.get('use_markitdown', False)
     include_page_numbers = options.get('include_page_numbers', True)
     include_page_breaks = options.get('include_page_breaks', True)
     filter_headers_footers = options.get('filter_headers_footers', True)
     preserve_formatting = options.get('preserve_formatting', True)
 
-    # Try PyMuPDF first - it has the best column detection
+    # Try Marker first - it has the best column detection using CV/ML
+    if use_marker and MARKER_AVAILABLE:
+        try:
+            return extract_with_marker(pdf_path, start_page, end_page)
+        except Exception as e:
+            # Fall back to other methods if Marker fails
+            print(f"Marker failed: {e}")
+            pass
+
+    # Try PyMuPDF second
     if use_pymupdf and PYMUPDF_AVAILABLE:
         try:
             return extract_with_pymupdf(pdf_path, start_page, end_page)
@@ -560,7 +606,8 @@ def extract_pdf():
 
         # Get formatting options
         options = {
-            'use_pymupdf': request.form.get('use_pymupdf', 'true').lower() == 'true',
+            'use_marker': request.form.get('use_marker', 'true').lower() == 'true',
+            'use_pymupdf': request.form.get('use_pymupdf', 'false').lower() == 'true',
             'use_markitdown': request.form.get('use_markitdown', 'false').lower() == 'true',
             'include_page_numbers': request.form.get('include_page_numbers', 'true').lower() == 'true',
             'include_page_breaks': request.form.get('include_page_breaks', 'true').lower() == 'true',

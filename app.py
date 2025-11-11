@@ -110,102 +110,92 @@ def extract_text_with_layout(page):
         page_width = page.width
         page_height = page.height
 
-        # Sort words by y-position first to group them into lines
-        words_by_line = []
-        current_line_words = []
-        last_top = None
-        y_tolerance = 5  # Tolerance for same line
-
-        for word in sorted(words, key=lambda w: (w['top'], w['x0'])):
-            if last_top is None or abs(word['top'] - last_top) <= y_tolerance:
-                # Same line
-                current_line_words.append(word)
-                if last_top is None:
-                    last_top = word['top']
-            else:
-                # New line
-                if current_line_words:
-                    words_by_line.append(current_line_words)
-                current_line_words = [word]
-                last_top = word['top']
-
-        if current_line_words:
-            words_by_line.append(current_line_words)
-
-        # Detect columns by analyzing word positions across all lines
-        # Find the most common x-positions where text starts
-        from collections import Counter
-        left_margins = []
-
-        for line_words in words_by_line:
-            if line_words:
-                left_margins.append(int(line_words[0]['x0'] / 10) * 10)  # Bin to 10pt
-
-        # Find clusters of left margins
-        margin_counts = Counter(left_margins)
-        common_margins = sorted([m for m, c in margin_counts.items() if c > len(words_by_line) * 0.1])
-
-        # Detect column gap by finding large horizontal spaces
+        # Detect column boundaries FIRST by analyzing x-coordinate distribution
+        # Find the largest horizontal gap that could separate columns
         all_x_positions = sorted(set([int(w['x0']) for w in words] + [int(w['x1']) for w in words]))
 
+        # Find gaps between consecutive x-positions
         gaps = []
         for i in range(len(all_x_positions) - 1):
             gap_size = all_x_positions[i + 1] - all_x_positions[i]
             if gap_size > 40:  # Significant gap
                 gap_center = (all_x_positions[i] + all_x_positions[i + 1]) / 2
-                gaps.append((gap_size, gap_center))
-
-        # Use the largest gap as column separator if it exists
-        if gaps:
-            gaps.sort(reverse=True)
-            # Take the largest gap that's in the middle third of the page
-            column_gap = None
-            for gap_size, gap_center in gaps:
+                # Only consider gaps in the middle region of the page
                 if page_width * 0.25 < gap_center < page_width * 0.75:
-                    column_gap = gap_center
-                    break
+                    gaps.append((gap_size, gap_center))
 
-            if column_gap:
-                # Two column layout
-                column_boundaries = [
-                    (0, column_gap, 0),
-                    (column_gap, page_width, 1)
-                ]
-            else:
-                # Single column
-                column_boundaries = [(0, page_width, 0)]
+        # Determine column boundaries
+        if gaps:
+            # Sort by gap size and take the largest
+            gaps.sort(reverse=True)
+            column_gap = gaps[0][1]  # Take the center of the largest gap
+
+            # Two column layout
+            column_boundaries = [
+                (0, column_gap, 0),  # Left column
+                (column_gap, page_width, 1)  # Right column
+            ]
         else:
             # Single column
             column_boundaries = [(0, page_width, 0)]
 
-        # Assign each line to a column based on where most of its words are
-        lines_with_columns = []
+        # Assign each word to a column based on its x-position
+        for word in words:
+            word_center_x = (word['x0'] + word['x1']) / 2
 
-        for line_words in words_by_line:
-            if not line_words:
-                continue
-
-            # Determine which column this line belongs to
-            line_start_x = line_words[0]['x0']
-            line_end_x = line_words[-1]['x1']
-            line_center_x = (line_start_x + line_end_x) / 2
-
-            # Find best matching column
-            assigned_column = 0
+            assigned = False
             for min_x, max_x, col_idx in column_boundaries:
-                if min_x <= line_center_x <= max_x:
-                    assigned_column = col_idx
+                if min_x <= word_center_x <= max_x:
+                    word['column'] = col_idx
+                    assigned = True
                     break
 
-            # Reconstruct line text with proper spacing
-            line_text = ' '.join([w['text'] for w in line_words])
-            lines_with_columns.append((assigned_column, line_words[0]['top'], line_text))
+            if not assigned:
+                # Fallback: assign to nearest column
+                distances = [(abs(word_center_x - (min_x + max_x) / 2), col_idx) for min_x, max_x, col_idx in column_boundaries]
+                word['column'] = min(distances)[1]
 
-        # Sort by column, then by y-position
-        lines_with_columns.sort(key=lambda x: (x[0], x[1]))
+        # Process each column separately
+        result_lines = []
 
-        # Extract just the text
-        result_lines = [line_text for _, _, line_text in lines_with_columns]
+        for col_idx in range(len(column_boundaries)):
+            # Get all words in this column
+            column_words = [w for w in words if w.get('column') == col_idx]
+
+            if not column_words:
+                continue
+
+            # Sort words in this column by y-position, then x-position
+            column_words.sort(key=lambda w: (w['top'], w['x0']))
+
+            # Group words into lines within this column
+            lines_in_column = []
+            current_line_words = []
+            last_top = None
+            y_tolerance = 5  # Tolerance for considering words on the same line
+
+            for word in column_words:
+                if last_top is None or abs(word['top'] - last_top) <= y_tolerance:
+                    # Same line
+                    current_line_words.append(word)
+                    if last_top is None:
+                        last_top = word['top']
+                else:
+                    # New line
+                    if current_line_words:
+                        line_text = ' '.join([w['text'] for w in current_line_words])
+                        lines_in_column.append((current_line_words[0]['top'], line_text))
+                    current_line_words = [word]
+                    last_top = word['top']
+
+            # Add last line
+            if current_line_words:
+                line_text = ' '.join([w['text'] for w in current_line_words])
+                lines_in_column.append((current_line_words[0]['top'], line_text))
+
+            # Sort lines by y-position and add to result
+            lines_in_column.sort(key=lambda x: x[0])
+            result_lines.extend([line_text for _, line_text in lines_in_column])
 
         return '\n'.join(result_lines)
 

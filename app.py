@@ -110,108 +110,104 @@ def extract_text_with_layout(page):
         page_width = page.width
         page_height = page.height
 
-        # Detect columns using histogram-based approach
-        # Create histogram of word starts by x-coordinate
-        from collections import defaultdict
-        x_histogram = defaultdict(int)
+        # Sort words by y-position first to group them into lines
+        words_by_line = []
+        current_line_words = []
+        last_top = None
+        y_tolerance = 5  # Tolerance for same line
 
-        for word in words:
-            # Bin x-coordinates into 5-point buckets
-            x_bucket = int(word['x0'] / 5) * 5
-            x_histogram[x_bucket] += 1
+        for word in sorted(words, key=lambda w: (w['top'], w['x0'])):
+            if last_top is None or abs(word['top'] - last_top) <= y_tolerance:
+                # Same line
+                current_line_words.append(word)
+                if last_top is None:
+                    last_top = word['top']
+            else:
+                # New line
+                if current_line_words:
+                    words_by_line.append(current_line_words)
+                current_line_words = [word]
+                last_top = word['top']
 
-        # Find columns by detecting clusters of high word density
-        sorted_buckets = sorted(x_histogram.keys())
+        if current_line_words:
+            words_by_line.append(current_line_words)
 
-        # Find gaps (low density areas) that might separate columns
+        # Detect columns by analyzing word positions across all lines
+        # Find the most common x-positions where text starts
+        from collections import Counter
+        left_margins = []
+
+        for line_words in words_by_line:
+            if line_words:
+                left_margins.append(int(line_words[0]['x0'] / 10) * 10)  # Bin to 10pt
+
+        # Find clusters of left margins
+        margin_counts = Counter(left_margins)
+        common_margins = sorted([m for m, c in margin_counts.items() if c > len(words_by_line) * 0.1])
+
+        # Detect column gap by finding large horizontal spaces
+        all_x_positions = sorted(set([int(w['x0']) for w in words] + [int(w['x1']) for w in words]))
+
         gaps = []
-        min_gap_size = 30  # Minimum gap size to consider as column separator
-        current_gap_start = None
+        for i in range(len(all_x_positions) - 1):
+            gap_size = all_x_positions[i + 1] - all_x_positions[i]
+            if gap_size > 40:  # Significant gap
+                gap_center = (all_x_positions[i] + all_x_positions[i + 1]) / 2
+                gaps.append((gap_size, gap_center))
 
-        for i in range(len(sorted_buckets) - 1):
-            current_x = sorted_buckets[i]
-            next_x = sorted_buckets[i + 1]
-
-            # If there's a significant gap in x-coordinates
-            if next_x - current_x > min_gap_size:
-                gap_center = (current_x + next_x) / 2
-                gaps.append(gap_center)
-
-        # Determine column boundaries based on gaps
-        column_boundaries = []
-
-        if len(gaps) == 0:
-            # Single column - entire page width
-            column_boundaries = [(0, page_width, page_width / 2)]
-        else:
-            # Multiple columns
-            # First column: from left edge to first gap
-            column_boundaries.append((0, gaps[0], gaps[0] / 2))
-
-            # Middle columns (if any)
-            for i in range(len(gaps) - 1):
-                start = gaps[i]
-                end = gaps[i + 1]
-                mid = (start + end) / 2
-                column_boundaries.append((start, end, mid))
-
-            # Last column: from last gap to right edge
-            last_gap = gaps[-1]
-            column_boundaries.append((last_gap, page_width, (last_gap + page_width) / 2))
-
-        # Assign each word to a column based on its center x-coordinate
-        for word in words:
-            word_center_x = (word['x0'] + word['x1']) / 2
-
-            # Find which column this word belongs to
-            assigned = False
-            for col_idx, (min_x, max_x, mid_x) in enumerate(column_boundaries):
-                if min_x <= word_center_x <= max_x:
-                    word['column'] = col_idx
-                    assigned = True
+        # Use the largest gap as column separator if it exists
+        if gaps:
+            gaps.sort(reverse=True)
+            # Take the largest gap that's in the middle third of the page
+            column_gap = None
+            for gap_size, gap_center in gaps:
+                if page_width * 0.25 < gap_center < page_width * 0.75:
+                    column_gap = gap_center
                     break
 
-            if not assigned:
-                # If not assigned, use nearest column
-                distances = [abs(word_center_x - mid_x) for _, _, mid_x in column_boundaries]
-                word['column'] = distances.index(min(distances))
+            if column_gap:
+                # Two column layout
+                column_boundaries = [
+                    (0, column_gap, 0),
+                    (column_gap, page_width, 1)
+                ]
+            else:
+                # Single column
+                column_boundaries = [(0, page_width, 0)]
+        else:
+            # Single column
+            column_boundaries = [(0, page_width, 0)]
 
-        # Sort words: first by column (left to right), then by y-position (top to bottom), then by x
-        words.sort(key=lambda w: (w.get('column', 0), w['top'], w['x0']))
+        # Assign each line to a column based on where most of its words are
+        lines_with_columns = []
 
-        # Reconstruct text with proper line breaks
-        lines = []
-        current_line = []
-        last_top = None
-        last_column = None
-        line_tolerance = 3  # Tolerance for considering words on the same line
+        for line_words in words_by_line:
+            if not line_words:
+                continue
 
-        for word in words:
-            current_top = word['top']
-            current_column = word.get('column', 0)
+            # Determine which column this line belongs to
+            line_start_x = line_words[0]['x0']
+            line_end_x = line_words[-1]['x1']
+            line_center_x = (line_start_x + line_end_x) / 2
 
-            # Check if we need a new line
-            if last_top is not None:
-                # New line if:
-                # 1. Column changed (and we have multiple columns)
-                # 2. Y-position changed significantly
-                column_changed = current_column != last_column and len(column_boundaries) > 1
-                y_changed = abs(current_top - last_top) > line_tolerance
+            # Find best matching column
+            assigned_column = 0
+            for min_x, max_x, col_idx in column_boundaries:
+                if min_x <= line_center_x <= max_x:
+                    assigned_column = col_idx
+                    break
 
-                if column_changed or y_changed:
-                    if current_line:
-                        lines.append(' '.join(current_line))
-                        current_line = []
+            # Reconstruct line text with proper spacing
+            line_text = ' '.join([w['text'] for w in line_words])
+            lines_with_columns.append((assigned_column, line_words[0]['top'], line_text))
 
-            current_line.append(word['text'])
-            last_top = current_top
-            last_column = current_column
+        # Sort by column, then by y-position
+        lines_with_columns.sort(key=lambda x: (x[0], x[1]))
 
-        # Add last line
-        if current_line:
-            lines.append(' '.join(current_line))
+        # Extract just the text
+        result_lines = [line_text for _, _, line_text in lines_with_columns]
 
-        return '\n'.join(lines)
+        return '\n'.join(result_lines)
 
     except Exception as e:
         # Fallback to layout-preserving extraction

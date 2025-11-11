@@ -106,57 +106,85 @@ def extract_text_with_layout(page):
             # Fallback to basic extraction
             return page.extract_text()
 
-        # Detect columns by clustering x-coordinates
-        x_coords = [w['x0'] for w in words]
+        # Get page dimensions
+        page_width = page.width
+        page_height = page.height
 
-        # Simple column detection: find gaps in x-coordinates
-        sorted_x = sorted(set(x_coords))
-        columns = []
-        current_column = [sorted_x[0]]
+        # Detect columns using histogram-based approach
+        # Create histogram of word starts by x-coordinate
+        from collections import defaultdict
+        x_histogram = defaultdict(int)
 
-        # Group x-coordinates into columns (gap > 50 points suggests new column)
-        for x in sorted_x[1:]:
-            if x - current_column[-1] > 50:
-                columns.append(current_column)
-                current_column = [x]
-            else:
-                current_column.append(x)
-        columns.append(current_column)
+        for word in words:
+            # Bin x-coordinates into 5-point buckets
+            x_bucket = int(word['x0'] / 5) * 5
+            x_histogram[x_bucket] += 1
 
-        # If we have multiple columns, sort words by column then by y-position
-        if len(columns) > 1:
-            # Determine column boundaries
-            column_boundaries = []
-            for col in columns:
-                min_x = min(col)
-                max_x = max(col)
-                mid_x = (min_x + max_x) / 2
-                column_boundaries.append((min_x, max_x, mid_x))
+        # Find columns by detecting clusters of high word density
+        sorted_buckets = sorted(x_histogram.keys())
 
-            # Assign each word to a column
-            for word in words:
-                word_x = (word['x0'] + word['x1']) / 2
-                # Find which column this word belongs to
-                for col_idx, (min_x, max_x, mid_x) in enumerate(column_boundaries):
-                    if min_x <= word_x <= max_x + 20:  # Small tolerance
-                        word['column'] = col_idx
-                        break
-                else:
-                    # If no match, assign to nearest column
-                    distances = [abs(word_x - mid_x) for _, _, mid_x in column_boundaries]
-                    word['column'] = distances.index(min(distances))
+        # Find gaps (low density areas) that might separate columns
+        gaps = []
+        min_gap_size = 30  # Minimum gap size to consider as column separator
+        current_gap_start = None
 
-            # Sort words: first by column (left to right), then by y-position (top to bottom)
-            words.sort(key=lambda w: (w.get('column', 0), w['top'], w['x0']))
+        for i in range(len(sorted_buckets) - 1):
+            current_x = sorted_buckets[i]
+            next_x = sorted_buckets[i + 1]
+
+            # If there's a significant gap in x-coordinates
+            if next_x - current_x > min_gap_size:
+                gap_center = (current_x + next_x) / 2
+                gaps.append(gap_center)
+
+        # Determine column boundaries based on gaps
+        column_boundaries = []
+
+        if len(gaps) == 0:
+            # Single column - entire page width
+            column_boundaries = [(0, page_width, page_width / 2)]
         else:
-            # Single column: just sort by y-position then x-position
-            words.sort(key=lambda w: (w['top'], w['x0']))
+            # Multiple columns
+            # First column: from left edge to first gap
+            column_boundaries.append((0, gaps[0], gaps[0] / 2))
+
+            # Middle columns (if any)
+            for i in range(len(gaps) - 1):
+                start = gaps[i]
+                end = gaps[i + 1]
+                mid = (start + end) / 2
+                column_boundaries.append((start, end, mid))
+
+            # Last column: from last gap to right edge
+            last_gap = gaps[-1]
+            column_boundaries.append((last_gap, page_width, (last_gap + page_width) / 2))
+
+        # Assign each word to a column based on its center x-coordinate
+        for word in words:
+            word_center_x = (word['x0'] + word['x1']) / 2
+
+            # Find which column this word belongs to
+            assigned = False
+            for col_idx, (min_x, max_x, mid_x) in enumerate(column_boundaries):
+                if min_x <= word_center_x <= max_x:
+                    word['column'] = col_idx
+                    assigned = True
+                    break
+
+            if not assigned:
+                # If not assigned, use nearest column
+                distances = [abs(word_center_x - mid_x) for _, _, mid_x in column_boundaries]
+                word['column'] = distances.index(min(distances))
+
+        # Sort words: first by column (left to right), then by y-position (top to bottom), then by x
+        words.sort(key=lambda w: (w.get('column', 0), w['top'], w['x0']))
 
         # Reconstruct text with proper line breaks
         lines = []
         current_line = []
         last_top = None
         last_column = None
+        line_tolerance = 3  # Tolerance for considering words on the same line
 
         for word in words:
             current_top = word['top']
@@ -164,8 +192,13 @@ def extract_text_with_layout(page):
 
             # Check if we need a new line
             if last_top is not None:
-                # New line if y-position changed significantly (>3 points) or column changed
-                if abs(current_top - last_top) > 3 or (current_column != last_column and len(columns) > 1):
+                # New line if:
+                # 1. Column changed (and we have multiple columns)
+                # 2. Y-position changed significantly
+                column_changed = current_column != last_column and len(column_boundaries) > 1
+                y_changed = abs(current_top - last_top) > line_tolerance
+
+                if column_changed or y_changed:
                     if current_line:
                         lines.append(' '.join(current_line))
                         current_line = []
@@ -182,10 +215,15 @@ def extract_text_with_layout(page):
 
     except Exception as e:
         # Fallback to layout-preserving extraction
-        text = page.extract_text(layout=True, x_tolerance=3, y_tolerance=3)
-        if not text:
-            text = page.extract_text()
-        return text
+        try:
+            text = page.extract_text(layout=True, x_tolerance=3, y_tolerance=3)
+            if text:
+                return text
+        except:
+            pass
+
+        # Final fallback
+        return page.extract_text() or ""
 
 
 def is_list_item(line):

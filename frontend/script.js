@@ -135,10 +135,20 @@ async function handleExtract() {
     showLoading();
     resultSection.style.display = 'none';
 
+    // Get formatting options
+    const includePageNumbers = document.getElementById('includePageNumbers').checked;
+    const includePageBreaks = document.getElementById('includePageBreaks').checked;
+    const filterHeadersFooters = document.getElementById('filterHeadersFooters').checked;
+    const preserveFormatting = document.getElementById('preserveFormatting').checked;
+
     const formData = new FormData();
     formData.append('file', selectedFile);
     formData.append('start_page', startPage);
     formData.append('end_page', endPage);
+    formData.append('include_page_numbers', includePageNumbers);
+    formData.append('include_page_breaks', includePageBreaks);
+    formData.append('filter_headers_footers', filterHeadersFooters);
+    formData.append('preserve_formatting', preserveFormatting);
 
     try {
         const response = await fetch('/api/extract', {

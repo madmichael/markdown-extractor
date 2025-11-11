@@ -370,23 +370,31 @@ def extract_text_to_markdown(pdf_path, start_page, end_page, options=None):
     # Try Marker first - it has the best column detection using CV/ML
     if use_marker and MARKER_AVAILABLE:
         try:
-            return extract_with_marker(pdf_path, start_page, end_page)
+            print("Attempting extraction with Marker...")
+            result = extract_with_marker(pdf_path, start_page, end_page)
+            print("Marker extraction successful!")
+            return result
         except Exception as e:
             # Fall back to other methods if Marker fails
-            print(f"Marker failed: {e}")
-            pass
+            print(f"Marker failed with error: {e}")
+            import traceback
+            traceback.print_exc()
 
     # Try PyMuPDF second
     if use_pymupdf and PYMUPDF_AVAILABLE:
         try:
-            return extract_with_pymupdf(pdf_path, start_page, end_page)
+            print("Attempting extraction with PyMuPDF...")
+            result = extract_with_pymupdf(pdf_path, start_page, end_page)
+            print("PyMuPDF extraction successful!")
+            return result
         except Exception as e:
             # Fall back to other methods if PyMuPDF fails
-            pass
+            print(f"PyMuPDF failed with error: {e}")
 
     # Try MarkItDown if available and requested
     if use_markitdown and MARKITDOWN_AVAILABLE:
         try:
+            print("Attempting extraction with MarkItDown...")
             full_text = extract_with_markitdown(pdf_path)
 
             # If page range is not full document, we need to extract specific pages
@@ -401,8 +409,9 @@ def extract_text_to_markdown(pdf_path, start_page, end_page, options=None):
             # Fall through to pdfplumber for page range extraction
         except Exception as e:
             # Fall back to pdfplumber if MarkItDown fails
-            pass
+            print(f"MarkItDown failed with error: {e}")
 
+    print("Falling back to pdfplumber extraction...")
     markdown_content = []
     common_footers = set()  # Track repeated text that might be footers
 

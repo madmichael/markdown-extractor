@@ -20,11 +20,19 @@ try:
     from marker.converters.pdf import PdfConverter
     from marker.models import create_model_dict
     from marker.output import text_from_rendered
+    from marker.config.parser import ConfigParser
     MARKER_AVAILABLE = True
     # Load models once at startup
     print("Loading Marker models... (this may take a moment on first run)")
     MARKER_MODELS = create_model_dict()
-    MARKER_CONVERTER = PdfConverter(artifact_dict=MARKER_MODELS)
+
+    # Configure Marker to disable multiprocessing on Windows to avoid process pool crashes
+    config_dict = {"disable_multiprocessing": True}
+    config_parser = ConfigParser(config_dict)
+    MARKER_CONVERTER = PdfConverter(
+        artifact_dict=MARKER_MODELS,
+        config=config_parser.generate_config_dict()
+    )
     print("✓ Marker models loaded successfully!")
 except ImportError as e:
     print(f"✗ Marker not available: Import error - {e}")

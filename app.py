@@ -4,6 +4,11 @@ import pdfplumber
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
+try:
+    from markitdown import MarkItDown
+    MARKITDOWN_AVAILABLE = True
+except ImportError:
+    MARKITDOWN_AVAILABLE = False
 
 app = Flask(__name__, static_folder='frontend')
 CORS(app)
@@ -229,6 +234,25 @@ def is_list_item(line):
     return False
 
 
+def extract_with_markitdown(pdf_path):
+    """
+    Extract text from PDF using MarkItDown library.
+    This provides better column detection and structure preservation.
+
+    Args:
+        pdf_path: Path to the PDF file
+
+    Returns:
+        Markdown formatted text
+    """
+    if not MARKITDOWN_AVAILABLE:
+        raise ImportError("MarkItDown library not available")
+
+    md = MarkItDown()
+    result = md.convert(pdf_path)
+    return result.text_content
+
+
 def extract_text_to_markdown(pdf_path, start_page, end_page, options=None):
     """
     Extract text from PDF and convert to markdown format.
@@ -245,10 +269,30 @@ def extract_text_to_markdown(pdf_path, start_page, end_page, options=None):
     if options is None:
         options = {}
 
+    use_markitdown = options.get('use_markitdown', True)
     include_page_numbers = options.get('include_page_numbers', True)
     include_page_breaks = options.get('include_page_breaks', True)
     filter_headers_footers = options.get('filter_headers_footers', True)
     preserve_formatting = options.get('preserve_formatting', True)
+
+    # Try MarkItDown first if available and requested
+    if use_markitdown and MARKITDOWN_AVAILABLE:
+        try:
+            full_text = extract_with_markitdown(pdf_path)
+
+            # If page range is not full document, we need to extract specific pages
+            # For now, return full document - MarkItDown doesn't support page ranges natively
+            # TODO: Implement page range filtering for MarkItDown output
+            if start_page == 1:
+                with pdfplumber.open(pdf_path) as pdf:
+                    total_pages = len(pdf.pages)
+                    if end_page >= total_pages:
+                        return full_text
+
+            # Fall through to pdfplumber for page range extraction
+        except Exception as e:
+            # Fall back to pdfplumber if MarkItDown fails
+            pass
 
     markdown_content = []
     common_footers = set()  # Track repeated text that might be footers
@@ -453,6 +497,7 @@ def extract_pdf():
 
         # Get formatting options
         options = {
+            'use_markitdown': request.form.get('use_markitdown', 'true').lower() == 'true',
             'include_page_numbers': request.form.get('include_page_numbers', 'true').lower() == 'true',
             'include_page_breaks': request.form.get('include_page_breaks', 'true').lower() == 'true',
             'filter_headers_footers': request.form.get('filter_headers_footers', 'true').lower() == 'true',

@@ -17,21 +17,25 @@ except ImportError:
     PYMUPDF_AVAILABLE = False
 
 try:
-    from marker.convert import convert_single_pdf
-    from marker.models import load_all_models
+    from marker.converters.pdf import PdfConverter
+    from marker.models import create_model_dict
+    from marker.output import text_from_rendered
     MARKER_AVAILABLE = True
     # Load models once at startup
     print("Loading Marker models... (this may take a moment on first run)")
-    MARKER_MODELS = load_all_models()
+    MARKER_MODELS = create_model_dict()
+    MARKER_CONVERTER = PdfConverter(artifact_dict=MARKER_MODELS)
     print("✓ Marker models loaded successfully!")
 except ImportError as e:
     print(f"✗ Marker not available: Import error - {e}")
     MARKER_AVAILABLE = False
     MARKER_MODELS = None
+    MARKER_CONVERTER = None
 except Exception as e:
     print(f"✗ Marker models failed to load: {e}")
     MARKER_AVAILABLE = False
     MARKER_MODELS = None
+    MARKER_CONVERTER = None
 
 app = Flask(__name__, static_folder='frontend')
 CORS(app)
@@ -290,11 +294,12 @@ def extract_with_marker(pdf_path, start_page, end_page):
     Returns:
         Markdown formatted text
     """
-    if not MARKER_AVAILABLE:
+    if not MARKER_AVAILABLE or not MARKER_CONVERTER:
         raise ImportError("Marker library not available")
 
     # Marker processes the whole PDF
-    full_text, images, metadata = convert_single_pdf(pdf_path, MARKER_MODELS, max_pages=None)
+    rendered = MARKER_CONVERTER(pdf_path)
+    full_text, _, images = text_from_rendered(rendered)
 
     # If we need a page range, we'll need to filter the output
     # For now, return the full extraction

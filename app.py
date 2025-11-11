@@ -29,10 +29,20 @@ def clean_text(text):
     """Clean and normalize extracted text."""
     # Remove excessive whitespace
     text = re.sub(r'[ \t]+', ' ', text)
+
     # Remove word breaks (hyphenation at line end)
     text = re.sub(r'(\w)-\n(\w)', r'\1\2', text)
-    # Normalize line breaks
-    text = re.sub(r'\n+', '\n', text)
+
+    # Fix broken words across lines (e.g., "experi\nence" -> "experience")
+    # Look for lowercase letter followed by newline and lowercase letter
+    text = re.sub(r'([a-z])\n([a-z])', r'\1\2', text)
+
+    # Normalize multiple spaces
+    text = re.sub(r'  +', ' ', text)
+
+    # Normalize line breaks (but keep single line breaks)
+    text = re.sub(r'\n\n+', '\n\n', text)
+
     return text.strip()
 
 
@@ -79,6 +89,38 @@ def format_line_as_markdown(line, is_heading=False, heading_level=3):
         return f"{'#' * heading_level} {line}"
 
     return line
+
+
+def extract_text_with_layout(page):
+    """
+    Extract text from a page with better layout awareness.
+    Handles multi-column layouts by sorting text by position.
+    """
+    # Try layout-preserving extraction first
+    text = page.extract_text(layout=True, x_tolerance=3, y_tolerance=3)
+
+    if not text:
+        # Fallback to basic extraction
+        text = page.extract_text()
+
+    return text
+
+
+def is_list_item(line):
+    """Check if a line is a list item."""
+    line = line.strip()
+    if not line:
+        return False
+
+    # Check for bullet points
+    if re.match(r'^[•\-\*]\s+', line):
+        return True
+
+    # Check for numbered lists
+    if re.match(r'^\d+[\.\)]\s+', line):
+        return True
+
+    return False
 
 
 def extract_text_to_markdown(pdf_path, start_page, end_page, options=None):
@@ -132,7 +174,7 @@ def extract_text_to_markdown(pdf_path, start_page, end_page, options=None):
             # Second pass: extract and format text
             for page_num in range(start_page - 1, end_page):
                 page = pdf.pages[page_num]
-                text = page.extract_text()
+                text = extract_text_with_layout(page)
 
                 if text:
                     # Add page header if requested
@@ -143,9 +185,11 @@ def extract_text_to_markdown(pdf_path, start_page, end_page, options=None):
                     text = clean_text(text)
                     lines = text.split('\n')
 
-                    # Process lines
+                    # Process lines with better list handling
                     i = 0
                     paragraph_buffer = []
+                    in_list = False
+                    list_buffer = []
 
                     while i < len(lines):
                         line = lines[i].strip()
@@ -162,41 +206,77 @@ def extract_text_to_markdown(pdf_path, start_page, end_page, options=None):
                             continue
 
                         if not line:
-                            # Empty line - flush paragraph buffer
-                            if paragraph_buffer:
+                            # Empty line - flush buffers
+                            if in_list and list_buffer:
+                                # Flush list
+                                for list_item in list_buffer:
+                                    markdown_content.append(list_item + '\n')
+                                markdown_content.append('\n')
+                                list_buffer = []
+                                in_list = False
+                            elif paragraph_buffer:
+                                # Flush paragraph
                                 markdown_content.append(' '.join(paragraph_buffer) + '\n\n')
                                 paragraph_buffer = []
                             i += 1
                             continue
 
                         # Check if this is a heading
-                        is_heading = detect_heading(line, next_line) if preserve_formatting else False
+                        is_heading_line = detect_heading(line, next_line) if preserve_formatting else False
 
-                        if is_heading:
-                            # Flush paragraph buffer before heading
+                        if is_heading_line:
+                            # Flush any existing buffers
+                            if in_list and list_buffer:
+                                for list_item in list_buffer:
+                                    markdown_content.append(list_item + '\n')
+                                markdown_content.append('\n')
+                                list_buffer = []
+                                in_list = False
                             if paragraph_buffer:
                                 markdown_content.append(' '.join(paragraph_buffer) + '\n\n')
                                 paragraph_buffer = []
 
                             formatted_line = format_line_as_markdown(line, is_heading=True)
                             markdown_content.append(formatted_line + '\n\n')
-                        else:
-                            # Check if this is a list item
-                            if re.match(r'^[•\-\*]\s+', line) or re.match(r'^\d+[\.\)]\s+', line):
-                                # Flush paragraph buffer before list
-                                if paragraph_buffer:
-                                    markdown_content.append(' '.join(paragraph_buffer) + '\n\n')
-                                    paragraph_buffer = []
+                            i += 1
+                            continue
 
-                                formatted_line = format_line_as_markdown(line)
-                                markdown_content.append(formatted_line + '\n')
+                        # Check if this is a list item
+                        if is_list_item(line):
+                            # Flush paragraph buffer if we're starting a list
+                            if paragraph_buffer:
+                                markdown_content.append(' '.join(paragraph_buffer) + '\n\n')
+                                paragraph_buffer = []
+
+                            in_list = True
+                            formatted_line = format_line_as_markdown(line)
+                            list_buffer.append(formatted_line)
+                        elif in_list:
+                            # Check if this is a continuation of the previous list item
+                            # (indented or doesn't start with list marker)
+                            if list_buffer and not is_heading_line:
+                                # Append to the last list item
+                                list_buffer[-1] += ' ' + line
                             else:
-                                # Regular text - add to paragraph buffer
+                                # End of list, flush it
+                                for list_item in list_buffer:
+                                    markdown_content.append(list_item + '\n')
+                                markdown_content.append('\n')
+                                list_buffer = []
+                                in_list = False
+                                # Process this line as regular text
                                 paragraph_buffer.append(line)
+                        else:
+                            # Regular text - add to paragraph buffer
+                            paragraph_buffer.append(line)
 
                         i += 1
 
-                    # Flush remaining paragraph buffer
+                    # Flush remaining buffers
+                    if in_list and list_buffer:
+                        for list_item in list_buffer:
+                            markdown_content.append(list_item + '\n')
+                        markdown_content.append('\n')
                     if paragraph_buffer:
                         markdown_content.append(' '.join(paragraph_buffer) + '\n\n')
 

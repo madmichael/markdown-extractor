@@ -1,4 +1,5 @@
 import os
+import re
 import pdfplumber
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -24,7 +25,63 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-def extract_text_to_markdown(pdf_path, start_page, end_page):
+def clean_text(text):
+    """Clean and normalize extracted text."""
+    # Remove excessive whitespace
+    text = re.sub(r'[ \t]+', ' ', text)
+    # Remove word breaks (hyphenation at line end)
+    text = re.sub(r'(\w)-\n(\w)', r'\1\2', text)
+    # Normalize line breaks
+    text = re.sub(r'\n+', '\n', text)
+    return text.strip()
+
+
+def detect_heading(line, next_line=None):
+    """Detect if a line is likely a heading."""
+    line = line.strip()
+
+    # Empty lines are not headings
+    if not line:
+        return False
+
+    # All caps lines (at least 3 chars) are likely headings
+    if len(line) >= 3 and line.isupper() and not line.endswith('.'):
+        return True
+
+    # Short lines (< 60 chars) followed by empty line might be headings
+    if len(line) < 60 and next_line is not None and not next_line.strip():
+        # Check if it starts with capital and doesn't end with common punctuation
+        if line[0].isupper() and not line.endswith((',', ';', ':')):
+            return True
+
+    return False
+
+
+def format_line_as_markdown(line, is_heading=False, heading_level=3):
+    """Format a line as markdown."""
+    line = line.strip()
+
+    if not line:
+        return ''
+
+    # Detect and format bullet points
+    if re.match(r'^[•\-\*]\s+', line):
+        # Normalize bullet to markdown format
+        line = re.sub(r'^[•\-\*]\s+', '- ', line)
+        return line
+
+    # Detect numbered lists
+    if re.match(r'^\d+[\.\)]\s+', line):
+        return line
+
+    # Format as heading if detected
+    if is_heading:
+        return f"{'#' * heading_level} {line}"
+
+    return line
+
+
+def extract_text_to_markdown(pdf_path, start_page, end_page, options=None):
     """
     Extract text from PDF and convert to markdown format.
 
@@ -32,11 +89,21 @@ def extract_text_to_markdown(pdf_path, start_page, end_page):
         pdf_path: Path to the PDF file
         start_page: Starting page number (1-indexed)
         end_page: Ending page number (1-indexed)
+        options: Dictionary of formatting options
 
     Returns:
         Markdown formatted text
     """
+    if options is None:
+        options = {}
+
+    include_page_numbers = options.get('include_page_numbers', True)
+    include_page_breaks = options.get('include_page_breaks', True)
+    filter_headers_footers = options.get('filter_headers_footers', True)
+    preserve_formatting = options.get('preserve_formatting', True)
+
     markdown_content = []
+    common_footers = set()  # Track repeated text that might be footers
 
     try:
         with pdfplumber.open(pdf_path) as pdf:
@@ -46,23 +113,96 @@ def extract_text_to_markdown(pdf_path, start_page, end_page):
             if start_page < 1 or end_page > total_pages or start_page > end_page:
                 raise ValueError(f"Invalid page range. PDF has {total_pages} pages.")
 
-            # Extract text from specified page range
+            # First pass: collect potential headers/footers
+            if filter_headers_footers:
+                page_last_lines = []
+                for page_num in range(start_page - 1, end_page):
+                    text = pdf.pages[page_num].extract_text()
+                    if text:
+                        lines = text.split('\n')
+                        if lines:
+                            # Check last few lines for common footers
+                            page_last_lines.extend([l.strip() for l in lines[-3:] if l.strip()])
+
+                # Find lines that appear multiple times (likely footers)
+                from collections import Counter
+                line_counts = Counter(page_last_lines)
+                common_footers = {line for line, count in line_counts.items() if count > 2 and len(line) < 100}
+
+            # Second pass: extract and format text
             for page_num in range(start_page - 1, end_page):
                 page = pdf.pages[page_num]
                 text = page.extract_text()
 
                 if text:
-                    # Add page header
-                    markdown_content.append(f"## Page {page_num + 1}\n")
+                    # Add page header if requested
+                    if include_page_numbers:
+                        markdown_content.append(f"## Page {page_num + 1}\n\n")
 
-                    # Process text into markdown-friendly format
+                    # Clean text
+                    text = clean_text(text)
                     lines = text.split('\n')
-                    for line in lines:
-                        line = line.strip()
-                        if line:
-                            markdown_content.append(line + '\n')
 
-                    markdown_content.append('\n---\n\n')  # Page separator
+                    # Process lines
+                    i = 0
+                    paragraph_buffer = []
+
+                    while i < len(lines):
+                        line = lines[i].strip()
+                        next_line = lines[i + 1].strip() if i + 1 < len(lines) else None
+
+                        # Skip common footers/headers
+                        if filter_headers_footers and line in common_footers:
+                            i += 1
+                            continue
+
+                        # Skip page numbers at top/bottom
+                        if filter_headers_footers and re.match(r'^Page\s+\d+\s*$', line, re.IGNORECASE):
+                            i += 1
+                            continue
+
+                        if not line:
+                            # Empty line - flush paragraph buffer
+                            if paragraph_buffer:
+                                markdown_content.append(' '.join(paragraph_buffer) + '\n\n')
+                                paragraph_buffer = []
+                            i += 1
+                            continue
+
+                        # Check if this is a heading
+                        is_heading = detect_heading(line, next_line) if preserve_formatting else False
+
+                        if is_heading:
+                            # Flush paragraph buffer before heading
+                            if paragraph_buffer:
+                                markdown_content.append(' '.join(paragraph_buffer) + '\n\n')
+                                paragraph_buffer = []
+
+                            formatted_line = format_line_as_markdown(line, is_heading=True)
+                            markdown_content.append(formatted_line + '\n\n')
+                        else:
+                            # Check if this is a list item
+                            if re.match(r'^[•\-\*]\s+', line) or re.match(r'^\d+[\.\)]\s+', line):
+                                # Flush paragraph buffer before list
+                                if paragraph_buffer:
+                                    markdown_content.append(' '.join(paragraph_buffer) + '\n\n')
+                                    paragraph_buffer = []
+
+                                formatted_line = format_line_as_markdown(line)
+                                markdown_content.append(formatted_line + '\n')
+                            else:
+                                # Regular text - add to paragraph buffer
+                                paragraph_buffer.append(line)
+
+                        i += 1
+
+                    # Flush remaining paragraph buffer
+                    if paragraph_buffer:
+                        markdown_content.append(' '.join(paragraph_buffer) + '\n\n')
+
+                    # Add page separator if requested
+                    if include_page_breaks and page_num < end_page - 1:
+                        markdown_content.append('\n---\n\n')
 
             return ''.join(markdown_content)
 
@@ -91,6 +231,10 @@ def extract_pdf():
         - file: PDF file
         - start_page: Starting page number (optional, default: 1)
         - end_page: Ending page number (optional, default: last page)
+        - include_page_numbers: Include page headers (optional, default: true)
+        - include_page_breaks: Include page separators (optional, default: true)
+        - filter_headers_footers: Filter repeated headers/footers (optional, default: true)
+        - preserve_formatting: Preserve text formatting (optional, default: true)
     """
     # Check if file is present
     if 'file' not in request.files:
@@ -121,8 +265,16 @@ def extract_pdf():
 
         end_page = int(request.form.get('end_page', total_pages))
 
+        # Get formatting options
+        options = {
+            'include_page_numbers': request.form.get('include_page_numbers', 'true').lower() == 'true',
+            'include_page_breaks': request.form.get('include_page_breaks', 'true').lower() == 'true',
+            'filter_headers_footers': request.form.get('filter_headers_footers', 'true').lower() == 'true',
+            'preserve_formatting': request.form.get('preserve_formatting', 'true').lower() == 'true',
+        }
+
         # Extract and convert to markdown
-        markdown_text = extract_text_to_markdown(filepath, start_page, end_page)
+        markdown_text = extract_text_to_markdown(filepath, start_page, end_page, options)
 
         # Clean up uploaded file
         os.remove(filepath)

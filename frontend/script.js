@@ -136,7 +136,7 @@ async function handleExtract() {
     resultSection.style.display = 'none';
 
     // Get formatting options
-    const useMarkitdown = document.getElementById('useMarkitdown').checked;
+    const usePyMuPDF = document.getElementById('usePyMuPDF').checked;
     const includePageNumbers = document.getElementById('includePageNumbers').checked;
     const includePageBreaks = document.getElementById('includePageBreaks').checked;
     const filterHeadersFooters = document.getElementById('filterHeadersFooters').checked;
@@ -146,7 +146,7 @@ async function handleExtract() {
     formData.append('file', selectedFile);
     formData.append('start_page', startPage);
     formData.append('end_page', endPage);
-    formData.append('use_markitdown', useMarkitdown);
+    formData.append('use_pymupdf', usePyMuPDF);
     formData.append('include_page_numbers', includePageNumbers);
     formData.append('include_page_breaks', includePageBreaks);
     formData.append('filter_headers_footers', filterHeadersFooters);

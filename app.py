@@ -10,6 +10,12 @@ try:
 except ImportError:
     MARKITDOWN_AVAILABLE = False
 
+try:
+    import fitz  # PyMuPDF
+    PYMUPDF_AVAILABLE = True
+except ImportError:
+    PYMUPDF_AVAILABLE = False
+
 app = Flask(__name__, static_folder='frontend')
 CORS(app)
 
@@ -253,6 +259,54 @@ def extract_with_markitdown(pdf_path):
     return result.text_content
 
 
+def extract_with_pymupdf(pdf_path, start_page, end_page):
+    """
+    Extract text from PDF using PyMuPDF (fitz).
+    PyMuPDF has excellent column detection and reading order.
+
+    Args:
+        pdf_path: Path to the PDF file
+        start_page: Starting page number (1-indexed)
+        end_page: Ending page number (1-indexed)
+
+    Returns:
+        Markdown formatted text
+    """
+    if not PYMUPDF_AVAILABLE:
+        raise ImportError("PyMuPDF library not available")
+
+    doc = fitz.open(pdf_path)
+    markdown_content = []
+
+    try:
+        for page_num in range(start_page - 1, end_page):
+            if page_num >= len(doc):
+                break
+
+            page = doc[page_num]
+
+            # Get text blocks with position info - PyMuPDF sorts these in reading order
+            # This handles multi-column layouts automatically
+            blocks = page.get_text("blocks")
+
+            markdown_content.append(f"## Page {page_num + 1}\n\n")
+
+            for block in blocks:
+                # block is a tuple: (x0, y0, x1, y1, text, block_no, block_type)
+                if len(block) >= 5:
+                    text = block[4].strip()
+                    if text:
+                        # Add text with proper spacing
+                        markdown_content.append(text + '\n\n')
+
+            markdown_content.append('\n---\n\n')
+
+        return ''.join(markdown_content)
+
+    finally:
+        doc.close()
+
+
 def extract_text_to_markdown(pdf_path, start_page, end_page, options=None):
     """
     Extract text from PDF and convert to markdown format.
@@ -269,13 +323,22 @@ def extract_text_to_markdown(pdf_path, start_page, end_page, options=None):
     if options is None:
         options = {}
 
-    use_markitdown = options.get('use_markitdown', True)
+    use_pymupdf = options.get('use_pymupdf', True)
+    use_markitdown = options.get('use_markitdown', False)
     include_page_numbers = options.get('include_page_numbers', True)
     include_page_breaks = options.get('include_page_breaks', True)
     filter_headers_footers = options.get('filter_headers_footers', True)
     preserve_formatting = options.get('preserve_formatting', True)
 
-    # Try MarkItDown first if available and requested
+    # Try PyMuPDF first - it has the best column detection
+    if use_pymupdf and PYMUPDF_AVAILABLE:
+        try:
+            return extract_with_pymupdf(pdf_path, start_page, end_page)
+        except Exception as e:
+            # Fall back to other methods if PyMuPDF fails
+            pass
+
+    # Try MarkItDown if available and requested
     if use_markitdown and MARKITDOWN_AVAILABLE:
         try:
             full_text = extract_with_markitdown(pdf_path)
@@ -497,7 +560,8 @@ def extract_pdf():
 
         # Get formatting options
         options = {
-            'use_markitdown': request.form.get('use_markitdown', 'true').lower() == 'true',
+            'use_pymupdf': request.form.get('use_pymupdf', 'true').lower() == 'true',
+            'use_markitdown': request.form.get('use_markitdown', 'false').lower() == 'true',
             'include_page_numbers': request.form.get('include_page_numbers', 'true').lower() == 'true',
             'include_page_breaks': request.form.get('include_page_breaks', 'true').lower() == 'true',
             'filter_headers_footers': request.form.get('filter_headers_footers', 'true').lower() == 'true',

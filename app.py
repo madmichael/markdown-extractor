@@ -67,6 +67,10 @@ def allowed_file(filename):
 
 def clean_text(text):
     """Clean and normalize extracted text."""
+    # Remove HTML tags (especially <br> tags from Marker extraction)
+    text = re.sub(r'<br\s*/?>', ' ', text)  # Replace <br> and <br/> with space
+    text = re.sub(r'<[^>]+>', '', text)  # Remove any other HTML tags
+
     # Remove excessive whitespace
     text = re.sub(r'[ \t]+', ' ', text)
 
@@ -117,9 +121,9 @@ def format_line_as_markdown(line, is_heading=False, heading_level=3):
         return ''
 
     # Detect and format bullet points
-    if re.match(r'^[•\-\*]\s+', line):
+    if re.match(r'^[•●\-\*]\s+', line):
         # Normalize bullet to markdown format
-        line = re.sub(r'^[•\-\*]\s+', '- ', line)
+        line = re.sub(r'^[•●\-\*]\s+', '- ', line)
         return line
 
     # Detect numbered lists
@@ -259,7 +263,7 @@ def is_list_item(line):
         return False
 
     # Check for bullet points
-    if re.match(r'^[•\-\*]\s+', line):
+    if re.match(r'^[•●\-\*]\s+', line):
         return True
 
     # Check for numbered lists
